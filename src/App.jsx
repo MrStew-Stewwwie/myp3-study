@@ -210,19 +210,16 @@ const defaultData = () => ({
 });
 
 // ─── AI CALL ──────────────────────────────────────────────────────────────────
-async function callAI(systemPrompt, userPrompt) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
-    }),
-  });
-  const data = await response.json();
-  return data.content?.[0]?.text || "";
+async function callAI(system, user) {
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ system, user }),
+    });
+    const d = await res.json();
+    return d.content?.[0]?.text || "";
+  } catch { return "Error connecting to AI. Please try again."; }
 }
 
 // ─── TIMER ────────────────────────────────────────────────────────────────────
