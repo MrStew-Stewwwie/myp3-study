@@ -26,21 +26,20 @@ const makeCSS = (dark) => `
     --shadow: ${dark ? "0 4px 24px rgba(0,0,0,0.5)" : "0 4px 24px rgba(94,106,210,0.12)"};
     --shadow2: ${dark ? "0 2px 12px rgba(0,0,0,0.4)" : "0 2px 12px rgba(0,0,0,0.08)"};
   }
-  html, body { height: 100%; width: 100%; }
-  body { background: var(--bg); color: var(--text); font-family: 'Outfit', sans-serif; transition: background 0.3s, color 0.3s; display: block !important; place-items: unset !important; margin: 0; }
-  #root { width: 100%; min-height: 100vh; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--text); font-family: 'Outfit', sans-serif; transition: background 0.3s, color 0.3s; }
   h1,h2,h3,h4 { font-family: 'Bricolage Grotesque', sans-serif; }
   * { transition: background-color 0.2s, border-color 0.2s, color 0.2s; }
 
   /* Layout */
-  .app-shell { display: flex; min-height: 100vh; width: 100%; position: relative; }
+  .app-shell { display: flex; min-height: 100vh; }
   .sidebar { width: 260px; min-height: 100vh; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; left: 0; top: 0; bottom: 0; z-index: 100; transition: transform 0.3s; }
   .sidebar-logo { padding: 24px 20px 20px; border-bottom: 1px solid var(--border); }
   .sidebar-nav { flex: 1; padding: 12px 10px; overflow-y: auto; }
   .sidebar-footer { padding: 16px 10px; border-top: 1px solid var(--border); }
-  .main-area { margin-left: 260px; flex: 1; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
-  .topbar { height: 60px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 28px; gap: 12px; position: sticky; top: 0; z-index: 50; flex-shrink: 0; }
-  .content-area { flex: 1; padding: 28px; padding-top: 28px; max-width: 1100px; width: 100%; margin: 0 auto; }
+  .main-area { margin-left: 260px; flex: 1; min-height: 100vh; display: flex; flex-direction: column; }
+  .topbar { height: 60px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 28px; gap: 12px; position: sticky; top: 0; z-index: 50; }
+  .content-area { flex: 1; padding: 28px; max-width: 1100px; width: 100%; margin: 0 auto; }
 
   /* Nav items */
   .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 500; color: var(--text2); border: none; background: none; width: 100%; text-align: left; transition: all 0.15s; margin-bottom: 2px; }
@@ -214,29 +213,29 @@ async function callAI(system, user) {
   } catch { return "Error connecting to AI. Please try again."; }
 }
 
-async function callGemini(messages) {
-  const apiKey = localStorage.getItem("gemini_api_key");
-  if (!apiKey) return "⚠️ No Gemini API key set. Click the ⚙️ icon to add your key.";
+async function callClaude(messages) {
+  const apiKey = localStorage.getItem("claude_api_key");
+  if (!apiKey) return "⚠️ No API key set. Click the ⚙️ icon to add your key.";
   try {
-    // Gemini requires conversation to start with a 'user' role — filter leading assistant messages
-    const filtered = messages
-      .map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }))
-      .filter((_, i, arr) => {
-        // Drop leading model messages
-        if (i === 0 && arr[0].role === "model") return false;
-        return true;
-      });
-    // If nothing left to send, return early
-    if (!filtered.length || filtered[filtered.length - 1].role !== "user") {
-      return "Please type a message and I'll respond!";
-    }
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: filtered, generationConfig: { maxOutputTokens: 2048 } })
+    const filtered = messages.filter(m => m.role === "user" || m.role === "assistant");
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2048,
+        system: "You are a helpful MYP 3 study assistant. Help students with Math, English Language & Literature, Sciences, Language Acquisition, and Individuals & Societies. Be concise, clear, and encouraging.",
+        messages: filtered.map(m => ({ role: m.role, content: m.content }))
+      })
     });
     const d = await res.json();
-    if (d.error) return `API Error: ${d.error.message || "Unknown error. Please check your API key."}`;
-    return d.candidates?.[0]?.content?.parts?.[0]?.text || "No response received. Please try again.";
+    if (d.error) return `Error: ${d.error.message}`;
+    return d.content?.[0]?.text || "No response received. Please try again.";
   } catch (e) { return `Error: ${e.message}`; }
 }
 
@@ -985,10 +984,10 @@ function IndividualsPage({ onScore }) {
 
 // ── CHATBOT ───────────────────────────────────────────────────────────────────
 function ChatbotPage() {
-  const [messages, setMessages] = useState([{ role:"assistant", content:"👋 Hi! I'm your MYP 3 study assistant powered by Gemini. Ask me anything about your subjects, get help understanding concepts, or request practice questions!\n\nI can help with: Math, English, Sciences, Language Acquisition, and Individuals & Societies." }]);
+  const [messages, setMessages] = useState([{ role:"assistant", content:"👋 Hi! I'm your MYP 3 study assistant. Ask me anything about your subjects, get help understanding concepts, or request practice questions!\n\nI can help with: Math, English, Sciences, Language Acquisition, and Individuals & Societies." }]);
   const [input, setInput] = useState(""); const [load, setLoad] = useState(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
-  const [apiKey, setApiKey] = useState(localStorage.getItem("gemini_api_key") || "");
+  const [apiKey, setApiKey] = useState(localStorage.getItem("claude_api_key") || "");
   const chatRef = useRef();
 
   useEffect(() => { chatRef.current?.scrollTo(0, chatRef.current.scrollHeight); }, [messages]);
@@ -997,14 +996,14 @@ function ChatbotPage() {
     if (!input.trim() || load) return;
     const userMsg = { role:"user", content: input }; setInput("");
     const newMsgs = [...messages, userMsg]; setMessages(newMsgs); setLoad(true);
-    const reply = await callGemini([...messages.slice(1), userMsg]); // skip the initial greeting (role:assistant), send only actual conversation
-    setMessages(p => [...p, { role:"assistant", content: reply }]); setLoad(false);
+    const reply = await callClaude(newMsgs);
+    setMessages(p => [...p, { role:"assistant", content: reply || "I couldn't generate a response. Please try again." }]); setLoad(false);
   }
 
   function saveKey() {
-    localStorage.setItem("gemini_api_key", apiKey);
+    localStorage.setItem("claude_api_key", apiKey);
     setShowKeyInput(false);
-    setMessages(p => [...p, { role:"assistant", content:"✅ Gemini API key saved! You can now chat with me." }]);
+    setMessages(p => [...p, { role:"assistant", content:"✅ API key saved! You can now chat with me." }]);
   }
 
   const quickPrompts = ["Explain the DTM model","How do I analyse a sci-fi extract?","What is the reactivity series?","Give me 5 Spanish vocabulary words about pollution","How to calculate arc length?"];
@@ -1012,15 +1011,15 @@ function ChatbotPage() {
   return (
     <div style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 120px)", minHeight:500 }}>
       <div className="flex-between mb-20">
-        <SectionHeader title="🤖 AI Study Assistant" sub="Powered by Google Gemini 2.0 Flash" />
+        <SectionHeader title="🤖 AI Study Assistant" sub="Your personal MYP 3 tutor" />
         <button className="btn btn-secondary btn-sm" onClick={() => setShowKeyInput(!showKeyInput)}>⚙️ API Key</button>
       </div>
 
       {showKeyInput && (
         <div className="card mb-16 fade-in" style={{ borderColor:"var(--accent)44" }}>
-          <div style={{ fontWeight:700, marginBottom:12 }}>🔑 Gemini API Key Setup</div>
-          <div className="text-sm text-muted mb-12">Get a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ color:"var(--accent)" }}>aistudio.google.com/apikey</a> — it's free with generous limits.</div>
-          <div style={{ display:"flex", gap:8 }}><input type="password" placeholder="AIzaSy..." value={apiKey} onChange={e => setApiKey(e.target.value)} style={{ flex:1 }} /><button className="btn btn-primary" onClick={saveKey}>Save</button></div>
+          <div style={{ fontWeight:700, marginBottom:12 }}>🔑 AI API Key Setup</div>
+          <div className="text-sm text-muted mb-12">Enter your API key to enable the AI assistant.</div>
+          <div style={{ display:"flex", gap:8 }}><input type="password" placeholder="sk-ant-..." value={apiKey} onChange={e => setApiKey(e.target.value)} style={{ flex:1 }} /><button className="btn btn-primary" onClick={saveKey}>Save</button></div>
         </div>
       )}
 
@@ -1031,7 +1030,7 @@ function ChatbotPage() {
       <div ref={chatRef} className="chat-area card" style={{ flex:1 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start" }}>
-            {m.role==="assistant" && <div className="text-xs text-muted mb-4" style={{ marginLeft:4 }}>Gemini</div>}
+            {m.role==="assistant" && <div className="text-xs text-muted mb-4" style={{ marginLeft:4 }}>AI Assistant</div>}
             <div className={`chat-msg ${m.role==="user"?"user":"ai"}`}>{m.content}</div>
           </div>
         ))}
@@ -1131,6 +1130,11 @@ export default function App() {
             })}
           </nav>
           <div className="sidebar-footer">
+            <a href="https://flow-app-q591.vercel.app/" target="_blank" rel="noopener noreferrer" style={{ display:"block", marginBottom:12 }}>
+              <button className="btn btn-warn btn-block" style={{ fontSize:13, fontWeight:700, borderRadius:10, gap:6 }}>
+                ⚡ Boost Your Productivity
+              </button>
+            </a>
             <div className="flex-between" style={{ gap:8 }}>
               <div>
                 <div style={{ fontSize:13, fontWeight:600 }}>{user.name.split(" ")[0]}</div>
