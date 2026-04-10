@@ -213,52 +213,15 @@ async function callAI(system, user) {
   } catch { return "Error connecting to AI. Please try again."; }
 }
 
-// Fallback answers for when AI is unavailable
-const FALLBACK_ANSWERS = {
-  dtm: `The **Demographic Transition Model (DTM)** describes how countries change their birth and death rates as they develop economically. It has 5 stages:
-
-**Stage 1 – High Fluctuating:** Both birth rates and death rates are high. Population stays low and unstable. (e.g. isolated tribes)
-
-**Stage 2 – Early Expanding:** Death rates fall rapidly (due to better medicine/food) but birth rates stay high. Population grows fast. (e.g. Nigeria)
-
-**Stage 3 – Late Expanding:** Birth rates begin to fall as women gain education and access to contraception. Population still grows but slower. (e.g. India)
-
-**Stage 4 – Low Fluctuating:** Both birth and death rates are low. Population is high but stable. (e.g. USA, UK)
-
-**Stage 5 – Declining:** Birth rate falls below death rate. Population begins to shrink. (e.g. Japan, Hong Kong)
-
-📌 Key idea: As countries develop, they move through these stages. The DTM helps explain population patterns and predict future changes.`,
-  default: `Great question! I'm your MYP 3 Study Assistant. Here are some things I can help you with:
-
-📐 **Mathematics** – Geometry, Pythagoras, transformations, coordinate geometry
-📖 **English** – Sci-fi analysis, IB criteria, Ender's Game themes
-🔬 **Sciences** – Photosynthesis, reactivity series, light & sound waves
-🌍 **Language Acquisition** – Spanish vocabulary, environment topics
-🌐 **Individuals & Societies** – DTM model, population pyramids, culture
-
-Try asking me something specific like:
-• "Explain the reactivity series"
-• "How do I write a Criterion A essay?"
-• "What are the stages of the DTM?"`,
-};
-
-function getFallbackReply(userMessage) {
-  const msg = userMessage.toLowerCase();
-  if (msg.includes("dtm") || msg.includes("demographic transition")) {
-    return FALLBACK_ANSWERS.dtm;
-  }
-  return FALLBACK_ANSWERS.default;
-}
-
-async function callClaude(messages) {
+async function callClaude(messages, userSettings) {
   const apiKey = localStorage.getItem("claude_api_key");
   if (!apiKey) {
-    // No key set — use fallback
-    const lastUser = [...messages].reverse().find(m => m.role === "user");
-    return getFallbackReply(lastUser?.content || "");
+    return "⚠️ No API key set. Click **⚙️ API Key** above to add your Anthropic key.\n\nGet a free key at: console.anthropic.com";
   }
   try {
     const filtered = messages.filter(m => m.role === "user" || m.role === "assistant");
+    const grade = userSettings?.grade || "MYP 3";
+    const name = userSettings?.name || "student";
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -269,26 +232,35 @@ async function callClaude(messages) {
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
-        system: "You are a helpful MYP 3 study assistant. Help students with Math, English Language & Literature, Sciences, Language Acquisition, and Individuals & Societies. Be concise, clear, and encouraging.",
-        messages: filtered.map(m => ({ role: m.role, content: m.content }))
+        max_tokens: 2048,
+        system: `You are a helpful IB ${grade} study assistant for ${name}. Help with Math, English Language & Literature, Sciences, Language Acquisition, and Individuals & Societies. Be concise, clear, and encouraging. Use IB command terms correctly. Format responses with markdown where helpful.`,
+        messages: filtered.slice(-20).map(m => ({ role: m.role, content: m.content }))
       })
     });
     const d = await res.json();
-    // If any API error (billing, invalid key, etc.) — fall back silently
     if (d.error) {
-      const lastUser = [...messages].reverse().find(m => m.role === "user");
-      return getFallbackReply(lastUser?.content || "");
+      const code = d.error.type || "";
+      if (code.includes("authentication") || code.includes("invalid_api_key")) {
+        return "❌ Invalid API key. Please check your key in ⚙️ API Key and make sure it starts with `sk-ant-`.";
+      }
+      if (code.includes("rate_limit")) {
+        return "⏳ Rate limit reached. Please wait a moment and try again.";
+      }
+      if (code.includes("overloaded")) {
+        return "🔄 Claude is busy right now. Please try again in a few seconds.";
+      }
+      return `⚠️ API error: ${d.error.message || "Unknown error. Please try again."}`;
     }
-    return d.content?.[0]?.text || getFallbackReply(messages[messages.length - 1]?.content || "");
+    return d.content?.[0]?.text || "Sorry, I didn't get a response. Please try again.";
   } catch (e) {
-    const lastUser = [...messages].reverse().find(m => m.role === "user");
-    return getFallbackReply(lastUser?.content || "");
+    if (e.message?.includes("Failed to fetch") || e.message?.includes("NetworkError")) {
+      return "🌐 Network error — check your internet connection and try again.";
+    }
+    return `⚠️ Something went wrong: ${e.message}. Please try again.`;
   }
 }
 
 // Firebase Auth via REST API (no SDK needed)
-const FB_API_KEY = ""; // Users set this via env or we use Supabase alternative
 async function firebaseAuth(mode, email, password, name) {
   // Using localStorage as cloud-sync simulation; in production swap for real Firebase
   // For a proper setup, users configure VITE_FIREBASE_API_KEY
@@ -1031,10 +1003,8 @@ function IndividualsPage({ onScore }) {
 }
 
 // ── CHATBOT ───────────────────────────────────────────────────────────────────
-function ChatbotPage() {
-  const [messages, setMessages] = useState([
-    { role:"assistant", content:"Hello Aarush, welcome to Study Hub AI! 👋\n\nI'm your MYP 3 study assistant. Ask me anything about your subjects, get help understanding concepts, or request practice questions!\n\nI can help with: Math, English, Sciences, Language Acquisition, and Individuals & Societies." }
-  ]);
+function ChatbotPage({ userSettings }) {
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState(""); const [load, setLoad] = useState(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [apiKey, setApiKey] = useState(localStorage.getItem("claude_api_key") || "");
@@ -1053,8 +1023,8 @@ function ChatbotPage() {
     if (!input.trim() || load) return;
     const userMsg = { role:"user", content: input }; setInput("");
     const newMsgs = [...messages, userMsg]; setMessages(newMsgs); setLoad(true);
-    const reply = await callClaude(newMsgs);
-    setMessages(p => [...p, { role:"assistant", content: reply || "I couldn't generate a response. Please try again." }]); setLoad(false);
+    const reply = await callClaude(newMsgs, userSettings);
+    setMessages(p => [...p, { role:"assistant", content: reply || "Sorry, I didn't get a response. Please try again." }]); setLoad(false);
   }
 
   function saveKey() {
@@ -1071,7 +1041,10 @@ function ChatbotPage() {
     <div style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 120px)", minHeight:500 }}>
       <div className="flex-between mb-20">
         <SectionHeader title="🤖 AI Study Assistant" sub="Your personal MYP 3 tutor" />
-        <button className="btn btn-secondary btn-sm" onClick={toggleKeyPanel}>⚙️ API Key</button>
+        <div className="flex gap-8">
+          {messages.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setMessages([])}>🗑 Clear</button>}
+          <button className="btn btn-secondary btn-sm" onClick={toggleKeyPanel}>⚙️ API Key</button>
+        </div>
       </div>
 
       {showKeyInput && (
@@ -1100,6 +1073,13 @@ function ChatbotPage() {
       </div>
 
       <div ref={chatRef} className="chat-area card" style={{ flex:1 }}>
+        {messages.length === 0 && (
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", opacity:0.5, gap:12 }}>
+            <div style={{ fontSize:48 }}>🤖</div>
+            <div style={{ fontWeight:600, fontSize:16 }}>Ask me anything</div>
+            <div className="text-sm text-muted text-center">Math · English · Sciences · Language Acquisition · I&S</div>
+          </div>
+        )}
         {messages.map((m, i) => (
           <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start" }}>
             {m.role==="assistant" && <div className="text-xs text-muted mb-4" style={{ marginLeft:4 }}>AI Assistant</div>}
@@ -1125,6 +1105,97 @@ function ChatbotPage() {
   );
 }
 
+// ── SETTINGS ──────────────────────────────────────────────────────────────────
+function SettingsPage({ user, userSettings, onSave, dark, setDark }) {
+  const [name, setName] = useState(userSettings?.name || user?.name || "");
+  const [grade, setGrade] = useState(userSettings?.grade || "MYP 3");
+  const [school, setSchool] = useState(userSettings?.school || "Apeejay School International");
+  const [langPref, setLangPref] = useState(userSettings?.langPref || "Spanish");
+  const [saved, setSaved] = useState(false);
+
+  function save() {
+    onSave({ name, grade, school, langPref });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2200);
+  }
+
+  const grades = ["MYP 1","MYP 2","MYP 3","MYP 4","MYP 5","DP Year 1","DP Year 2"];
+  const langs = ["Spanish","French","German","Mandarin","Hindi","Japanese","Italian","Portuguese"];
+
+  return (
+    <div style={{ maxWidth: 620 }}>
+      <SectionHeader title="⚙️ Settings" sub="Personalise your study experience" />
+
+      {/* Profile */}
+      <div className="card mb-16">
+        <h3 style={{ fontWeight: 700, marginBottom: 20, fontSize: 16 }}>👤 Profile</h3>
+        <div className="mb-16">
+          <label>DISPLAY NAME</label>
+          <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" />
+        </div>
+        <div className="mb-16">
+          <label>GRADE / YEAR</label>
+          <select value={grade} onChange={e => setGrade(e.target.value)}>
+            {grades.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+        <div>
+          <label>SCHOOL</label>
+          <input type="text" value={school} onChange={e => setSchool(e.target.value)} placeholder="School name" />
+        </div>
+      </div>
+
+      {/* Preferences */}
+      <div className="card mb-16">
+        <h3 style={{ fontWeight: 700, marginBottom: 20, fontSize: 16 }}>🌍 Preferences</h3>
+        <div className="mb-16">
+          <label>DEFAULT LANGUAGE (Language Acquisition)</label>
+          <select value={langPref} onChange={e => setLangPref(e.target.value)}>
+            {langs.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+        </div>
+        <div>
+          <label>THEME</label>
+          <div className="flex gap-8 mt-8">
+            <button className={`btn ${dark ? "btn-primary" : "btn-secondary"}`} onClick={() => setDark(true)}>🌙 Dark Mode</button>
+            <button className={`btn ${!dark ? "btn-primary" : "btn-secondary"}`} onClick={() => setDark(false)}>☀️ Light Mode</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Account */}
+      <div className="card mb-16">
+        <h3 style={{ fontWeight: 700, marginBottom: 20, fontSize: 16 }}>🔒 Account</h3>
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          <div className="flex-between" style={{ padding:"10px 0", borderBottom:"1px solid var(--border)" }}>
+            <span className="text-sm text-muted">Email</span>
+            <span style={{ fontSize:14, fontWeight:500 }}>{user?.email}</span>
+          </div>
+          <div className="flex-between" style={{ padding:"10px 0" }}>
+            <span className="text-sm text-muted">Member since</span>
+            <span style={{ fontSize:14, fontWeight:500 }}>2026</span>
+          </div>
+        </div>
+      </div>
+
+      {/* AI Key */}
+      <div className="card mb-24" style={{ borderColor:"var(--accent)44" }}>
+        <h3 style={{ fontWeight: 700, marginBottom: 8, fontSize: 16 }}>🔑 AI API Key</h3>
+        <p className="text-sm text-muted mb-16">Your Anthropic key is used for the AI Study Assistant. Get one free at <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" style={{ color:"var(--accent)" }}>console.anthropic.com</a></p>
+        <div style={{ display:"flex", gap:8 }}>
+          <input type="password" value={localStorage.getItem("claude_api_key") || ""} placeholder="sk-ant-..." readOnly style={{ flex:1, fontFamily:"monospace" }} />
+          <button className="btn btn-secondary btn-sm" onClick={() => { const k = prompt("Enter your Anthropic API key (sk-ant-...):"); if (k?.trim()) { localStorage.setItem("claude_api_key", k.trim()); alert("Key saved! ✓"); } }}>Change</button>
+        </div>
+      </div>
+
+      <button className="btn btn-primary btn-lg btn-block" onClick={save}>
+        {saved ? "✓ Saved!" : "Save Changes"}
+      </button>
+      {saved && <div className="text-sm text-muted text-center mt-12 fade-in">Settings updated successfully.</div>}
+    </div>
+  );
+}
+
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [dark, setDark] = useState(true);
@@ -1133,8 +1204,17 @@ export default function App() {
   const [page, setPage] = useState("home");
   const [syllabusUploaded, setSyllabusUploaded] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userSettings, setUserSettings] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("myp3_settings") || "{}"); } catch { return {}; }
+  });
 
   function handleScore(subjectId, score) { setScores(prev => ({ ...prev, [subjectId]: [...(prev[subjectId]||[]), score] })); }
+
+  function saveSettings(newSettings) {
+    const merged = { ...userSettings, ...newSettings };
+    setUserSettings(merged);
+    localStorage.setItem("myp3_settings", JSON.stringify(merged));
+  }
 
   const avgScores = {};
   Object.entries(scores).forEach(([id,arr]) => { if (arr.length) avgScores[id] = Math.round(arr.reduce((a,b) => a+b,0)/arr.length); });
@@ -1150,6 +1230,7 @@ export default function App() {
     { section:"Tools" },
     { id:"chatbot", icon:"🤖", label:"AI Chatbot" },
     { id:"syllabus", icon:"📄", label:"Syllabus Upload" },
+    { id:"settings", icon:"⚙️", label:"Settings" },
   ];
 
   function renderPage() {
@@ -1160,8 +1241,9 @@ export default function App() {
       case "sciences": return <SciencesPage onScore={handleScore} />;
       case "langacq": return <LangAcqPage onScore={handleScore} />;
       case "individuals": return <IndividualsPage onScore={handleScore} />;
-      case "chatbot": return <ChatbotPage />;
+      case "chatbot": return <ChatbotPage userSettings={{ ...userSettings, name: userSettings.name || user?.name }} />;
       case "syllabus": return <SyllabusUpload onUpload={data => { setSyllabusUploaded(true); setPage("home"); }} />;
+      case "settings": return <SettingsPage user={user} userSettings={userSettings} onSave={saveSettings} dark={dark} setDark={setDark} />;
       default: return <HomePage user={user} scores={avgScores} onSelect={setPage} syllabusUploaded={syllabusUploaded} onUploadClick={() => setPage("syllabus")} />;
     }
   }
@@ -1214,6 +1296,7 @@ export default function App() {
               </div>
               <div className="flex gap-8">
                 <button className="theme-toggle" onClick={() => setDark(d => !d)} title="Toggle theme" />
+                <button className="btn btn-ghost btn-sm" onClick={() => { setPage("settings"); setSidebarOpen(false); }} title="Settings">⚙️</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => { setUser(null); setPage("home"); }} title="Sign out">↩</button>
               </div>
             </div>
