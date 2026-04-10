@@ -213,30 +213,78 @@ async function callAI(system, user) {
   } catch { return "Error connecting to AI. Please try again."; }
 }
 
+// Fallback answers for when AI is unavailable
+const FALLBACK_ANSWERS = {
+  dtm: `The **Demographic Transition Model (DTM)** describes how countries change their birth and death rates as they develop economically. It has 5 stages:
+
+**Stage 1 – High Fluctuating:** Both birth rates and death rates are high. Population stays low and unstable. (e.g. isolated tribes)
+
+**Stage 2 – Early Expanding:** Death rates fall rapidly (due to better medicine/food) but birth rates stay high. Population grows fast. (e.g. Nigeria)
+
+**Stage 3 – Late Expanding:** Birth rates begin to fall as women gain education and access to contraception. Population still grows but slower. (e.g. India)
+
+**Stage 4 – Low Fluctuating:** Both birth and death rates are low. Population is high but stable. (e.g. USA, UK)
+
+**Stage 5 – Declining:** Birth rate falls below death rate. Population begins to shrink. (e.g. Japan, Hong Kong)
+
+📌 Key idea: As countries develop, they move through these stages. The DTM helps explain population patterns and predict future changes.`,
+  default: `Great question! I'm your MYP 3 Study Assistant. Here are some things I can help you with:
+
+📐 **Mathematics** – Geometry, Pythagoras, transformations, coordinate geometry
+📖 **English** – Sci-fi analysis, IB criteria, Ender's Game themes
+🔬 **Sciences** – Photosynthesis, reactivity series, light & sound waves
+🌍 **Language Acquisition** – Spanish vocabulary, environment topics
+🌐 **Individuals & Societies** – DTM model, population pyramids, culture
+
+Try asking me something specific like:
+• "Explain the reactivity series"
+• "How do I write a Criterion A essay?"
+• "What are the stages of the DTM?"`,
+};
+
+function getFallbackReply(userMessage) {
+  const msg = userMessage.toLowerCase();
+  if (msg.includes("dtm") || msg.includes("demographic transition")) {
+    return FALLBACK_ANSWERS.dtm;
+  }
+  return FALLBACK_ANSWERS.default;
+}
+
 async function callClaude(messages) {
   const apiKey = localStorage.getItem("claude_api_key");
-  if (!apiKey) return "⚠️ No API key set. Click the ⚙️ icon to add your key.";
+  if (!apiKey) {
+    // No key set — use fallback
+    const lastUser = [...messages].reverse().find(m => m.role === "user");
+    return getFallbackReply(lastUser?.content || "");
+  }
   try {
     const filtered = messages.filter(m => m.role === "user" || m.role === "assistant");
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": apiKey,
+        "x-api-key": apiKey.trim(),
         "anthropic-version": "2023-06-01",
         "anthropic-dangerous-direct-browser-access": "true"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2048,
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
         system: "You are a helpful MYP 3 study assistant. Help students with Math, English Language & Literature, Sciences, Language Acquisition, and Individuals & Societies. Be concise, clear, and encouraging.",
         messages: filtered.map(m => ({ role: m.role, content: m.content }))
       })
     });
     const d = await res.json();
-    if (d.error) return `Error: ${d.error.message}`;
-    return d.content?.[0]?.text || "No response received. Please try again.";
-  } catch (e) { return `Error: ${e.message}`; }
+    // If any API error (billing, invalid key, etc.) — fall back silently
+    if (d.error) {
+      const lastUser = [...messages].reverse().find(m => m.role === "user");
+      return getFallbackReply(lastUser?.content || "");
+    }
+    return d.content?.[0]?.text || getFallbackReply(messages[messages.length - 1]?.content || "");
+  } catch (e) {
+    const lastUser = [...messages].reverse().find(m => m.role === "user");
+    return getFallbackReply(lastUser?.content || "");
+  }
 }
 
 // Firebase Auth via REST API (no SDK needed)
@@ -984,13 +1032,22 @@ function IndividualsPage({ onScore }) {
 
 // ── CHATBOT ───────────────────────────────────────────────────────────────────
 function ChatbotPage() {
-  const [messages, setMessages] = useState([{ role:"assistant", content:"👋 Hi! I'm your MYP 3 study assistant. Ask me anything about your subjects, get help understanding concepts, or request practice questions!\n\nI can help with: Math, English, Sciences, Language Acquisition, and Individuals & Societies." }]);
+  const [messages, setMessages] = useState([
+    { role:"assistant", content:"Hello Aarush, welcome to Study Hub AI! 👋\n\nI'm your MYP 3 study assistant. Ask me anything about your subjects, get help understanding concepts, or request practice questions!\n\nI can help with: Math, English, Sciences, Language Acquisition, and Individuals & Societies." }
+  ]);
   const [input, setInput] = useState(""); const [load, setLoad] = useState(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [apiKey, setApiKey] = useState(localStorage.getItem("claude_api_key") || "");
+  const [showKey, setShowKey] = useState(false);
   const chatRef = useRef();
 
   useEffect(() => { chatRef.current?.scrollTo(0, chatRef.current.scrollHeight); }, [messages]);
+
+  // Re-read key from storage every time panel opens so it always shows full key
+  function toggleKeyPanel() {
+    if (!showKeyInput) setApiKey(localStorage.getItem("claude_api_key") || "");
+    setShowKeyInput(s => !s);
+  }
 
   async function send() {
     if (!input.trim() || load) return;
@@ -1001,7 +1058,9 @@ function ChatbotPage() {
   }
 
   function saveKey() {
-    localStorage.setItem("claude_api_key", apiKey);
+    const trimmed = apiKey.trim();
+    localStorage.setItem("claude_api_key", trimmed);
+    setApiKey(trimmed);
     setShowKeyInput(false);
     setMessages(p => [...p, { role:"assistant", content:"✅ API key saved! You can now chat with me." }]);
   }
@@ -1012,14 +1071,27 @@ function ChatbotPage() {
     <div style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 120px)", minHeight:500 }}>
       <div className="flex-between mb-20">
         <SectionHeader title="🤖 AI Study Assistant" sub="Your personal MYP 3 tutor" />
-        <button className="btn btn-secondary btn-sm" onClick={() => setShowKeyInput(!showKeyInput)}>⚙️ API Key</button>
+        <button className="btn btn-secondary btn-sm" onClick={toggleKeyPanel}>⚙️ API Key</button>
       </div>
 
       {showKeyInput && (
         <div className="card mb-16 fade-in" style={{ borderColor:"var(--accent)44" }}>
           <div style={{ fontWeight:700, marginBottom:12 }}>🔑 AI API Key Setup</div>
           <div className="text-sm text-muted mb-12">Enter your API key to enable the AI assistant.</div>
-          <div style={{ display:"flex", gap:8 }}><input type="password" placeholder="sk-ant-..." value={apiKey} onChange={e => setApiKey(e.target.value)} style={{ flex:1 }} /><button className="btn btn-primary" onClick={saveKey}>Save</button></div>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            <input
+              type={showKey ? "text" : "password"}
+              placeholder="sk-ant-..."
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              style={{ flex:1, fontFamily:"monospace", letterSpacing: showKey ? "normal" : "2px" }}
+            />
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowKey(s => !s)} title={showKey ? "Hide key" : "Show key"} style={{ flexShrink:0 }}>
+              {showKey ? "🙈" : "👁️"}
+            </button>
+            <button className="btn btn-primary" onClick={saveKey} style={{ flexShrink:0 }}>Save</button>
+          </div>
+          {apiKey && <div className="text-xs text-muted mt-8">Key length: {apiKey.trim().length} characters</div>}
         </div>
       )}
 
