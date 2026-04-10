@@ -240,7 +240,7 @@ async function callClaude(messages) {
 }
 
 // Firebase Auth via REST API (no SDK needed)
-const FB_API_KEY = "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"; // Users set this via env or we use Supabase alternative
+const FB_API_KEY = ""; // Users set this via env or we use Supabase alternative
 async function firebaseAuth(mode, email, password, name) {
   // Using localStorage as cloud-sync simulation; in production swap for real Firebase
   // For a proper setup, users configure VITE_FIREBASE_API_KEY
